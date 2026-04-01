@@ -4,17 +4,72 @@ from kokoro import KPipeline
 import os
 import re
 import requests
+import mimetypes
 from pathlib import Path
+from dotenv import load_dotenv
+
 pipeline = KPipeline(lang_code='a') 
 
-def download_cover(book_id, folder_name):
-    # Standard Gutenberg cover URL pattern
+load_dotenv()
+
+
+def get_supabase_config():
+    
+    supabase_url = os.getenv("SUPABASE_URL","")
+
+    supabase_api_key = os.getenv("SUPABASE_KEY","")
+    
+    bucket_name = os.getenv("BUCKET_NAME","")
+    return supabase_url, supabase_api_key, bucket_name
+
+
+def upload_file_to_supabase(local_file_path, remote_path):
+    supabase_url, supabase_api_key, bucket_name = get_supabase_config()
+    if not supabase_url or not supabase_api_key or not bucket_name:
+        print("Supabase config not set. Skipping upload.")
+        return
+
+    upload_url = f"{supabase_url}/storage/v1/object/{bucket_name}/{remote_path}"
+    content_type = mimetypes.guess_type(local_file_path)[0] or "application/octet-stream"
+    headers = {
+        "apikey": supabase_api_key,
+        "Authorization": f"Bearer {supabase_api_key}",
+        "Content-Type": content_type,
+        "x-upsert": "true",
+    }
+
+    with open(local_file_path, "rb") as f:
+        response = requests.post(upload_url, headers=headers, data=f)
+
+    # If object already exists and POST fails, try update.
+    if response.status_code in (400, 409):
+        with open(local_file_path, "rb") as f:
+            response = requests.put(upload_url, headers=headers, data=f)
+
+    if response.status_code not in (200, 201):
+        print(f"Failed upload: {remote_path} -> {response.status_code} {response.text}")
+    else:
+        print(f"Uploaded to Supabase: {remote_path}")
+
+
+def upload_folder_to_supabase(local_folder, remote_prefix):
+    folder = Path(local_folder)
+    if not folder.exists():
+        return
+    for file_path in folder.rglob("*"):
+        if file_path.is_file():
+            remote_path = f"{remote_prefix}/{file_path.relative_to(folder).as_posix()}"
+            upload_file_to_supabase(str(file_path), remote_path)
+
+
+def download_cover(book_id, cover_folder):
+  
     cover_url = f"https://www.gutenberg.org/cache/epub/{book_id}/pg{book_id}.cover.medium.jpg"
     
     try:
         img_response = requests.get(cover_url, timeout=10)
         if img_response.status_code == 200:
-            cover_path = os.path.join(folder_name, "cover.jpg")
+            cover_path = os.path.join(cover_folder, "cover.jpg")
             with open(cover_path, "wb") as f:
                 f.write(img_response.content)
             print("Cover image saved as cover.jpg")
@@ -25,11 +80,11 @@ def download_cover(book_id, folder_name):
 
 
 def sanitize_filename(filename):
-    # 1. Remove \r and \n
+    # Remove \r and \n
     filename = filename.replace('\r', '').replace('\n', ' ')
-    # 2. Remove characters that Windows doesn't allow in folder names
+    # Remove characters that Windows doesn't allow in folder names
     filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-    # 3. Strip extra whitespace
+    # Strip extra whitespace
     return filename.strip()
 
 def get_book_title(raw_text):
@@ -54,7 +109,7 @@ def save_chapters_advanced(book_id):
     book_title = get_book_title(raw_text)
     folder_name = f"{book_title}_{book_id}"
     
-    # 1. Strip the legal headers/footers
+    #  Strip the legal headers/footers
     start_match = re.search(r"\*\*\* START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK.*?\*\*\*", raw_text)
     end_match = re.search(r"\*\*\* END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK.*?\*\*\*", raw_text)
     
@@ -63,31 +118,35 @@ def save_chapters_advanced(book_id):
     else:
         body_text = raw_text
 
-    # 2. Split into chapters
+    #  Split into chapters
     # pattern = r'\n\s*(?:(?:CHAPTER|Chapter|Book|PART)\s+[IVXLCDM\d\.]+|(?:\b[IVXLCDM]+\b\.?))'
     pattern = r'\n\s*(?:(?:CHAPTER|Chapter|Book|PART)\s+[IVXLCDM\d\.]+|(?:\b[IVXLCDM]+\b\.\s*\n)+|(?:\b[IVXLCDM]+\b\s*\n))'
     chapters = [c.strip() for c in re.split(pattern, body_text) if len(c) > 500]
     
-    # if len(chapters) == 1:
-    #     print("No chapters found in this book.")
-    #     chapters = [body_text]
 
-    # 3. Create Folder Safely
+    # Create folder structure safely
     Path(folder_name).mkdir(parents=True, exist_ok=True)
-    download_cover(book_id, folder_name)
+    sounds_dir = Path(folder_name) / "sounds"
+    cover_dir = Path(folder_name) / "cover"
+    sounds_dir.mkdir(parents=True, exist_ok=True)
+    cover_dir.mkdir(parents=True, exist_ok=True)
+    download_cover(book_id, str(cover_dir))
 
-    # 4. Save files
+    #  Save files
          
     for i, content in enumerate(chapters, start=0):
         generator = pipeline(
                 content, voice='af_bella', 
                 speed=1, split_pattern=r'\n\n+'
             ) 
-        file_path = os.path.join(folder_name, f"chapter_{i+1:02d}.wav")
+        file_path = os.path.join(sounds_dir, f"chapter_{i+1:02d}.wav")
         with sf.SoundFile(file_path, mode='w', samplerate=24000, channels=1) as f:
             for i, (gs, ps, audio) in enumerate(generator):
                 f.write(audio)
 
+    #  Upload generated assets to Supabase bucket
+    upload_folder_to_supabase(str(sounds_dir), f"{folder_name}/sounds")
+    upload_folder_to_supabase(str(cover_dir), f"{folder_name}/cover")
         
         
             
@@ -95,4 +154,4 @@ def save_chapters_advanced(book_id):
 # [12122,1063,1952,5200,11]
 
 
-save_chapters_advanced(35)
+save_chapters_advanced(5200)
