@@ -1,144 +1,130 @@
 # Audiobook Pipeline
 
-This project turns Project Gutenberg books into chapter-by-chapter audiobook files using the `kokoro` text-to-speech pipeline.
+Generate chapter-based audiobooks from Project Gutenberg texts, save cover/audio/metadata locally, and optionally upload outputs to Supabase Storage.
 
-For a given Gutenberg book ID, the script:
+## Features
 
-- downloads the plain-text ebook from Project Gutenberg
-- extracts the book title from the metadata
-- removes the standard Gutenberg header and footer
-- splits the book into chapter-sized sections with a regex-based parser
-- generates a WAV file for each chapter using Kokoro TTS
-- downloads the Gutenberg cover image when one is available
+- Downloads Gutenberg plain-text books by book ID
+- Extracts core book metadata
+- Splits book content into chapter-like sections
+- Generates `.wav` audio per chapter with Kokoro TTS
+- Downloads the cover image (if available)
+- Writes `metadata.json` in each book output folder
+- Uploads `sounds/`, `cover/`, and `metadata.json` to Supabase (when configured)
 
-## What is in the repo
+## Project Structure
 
-- `main.py` - the current end-to-end script
-- `library_queue.csv` - a list of Gutenberg books that could be used as future input
-- `README.md` - project documentation
+```text
+audiobook_pipeline/
+├── src/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── gutenberg.py
+│   ├── metadata.py
+│   ├── processor.py
+│   └── supabase.py
+├── library_queue.csv
+├── main.py
+├── README.md
+└── requirements.txt
+```
 
 ## Requirements
 
-- Python 3.11+ recommended
+- Python 3.11+
 - Internet access for:
-  - fetching Gutenberg text files
-  - fetching cover images
-  - downloading Kokoro model assets on first run
+  - Project Gutenberg downloads
+  - Supabase uploads (if enabled)
+  - Kokoro model/assets
 
-Python packages used by the script:
-
-- `kokoro`
-- `soundfile`
-- `requests`
-
-## Setup
-
-Create and activate a virtual environment, then install dependencies:
+Install dependencies:
 
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-pip install kokoro soundfile requests
+pip install -r requirements.txt
 ```
 
-## How it works
+## Environment Variables
 
-The main entry point is currently hardcoded at the bottom of `main.py`:
+Create a `.env` file in the project root:
 
-```python
-save_chapters_advanced(35)
+```env
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_KEY=your-supabase-api-key
+BUCKET_NAME=your-storage-bucket
 ```
 
-That means running the script will generate audio for Gutenberg book ID `35`.
+If any value is missing, the pipeline still saves files locally and skips Supabase upload.
 
-To process a different book, change that number to another Gutenberg ID:
+## Run
 
-```python
-save_chapters_advanced(84)
+`main.py` accepts a CLI argument:
+
+```powershell
+python main.py --book_id 5200
 ```
 
-Then run:
+`--book_id` defaults to `5200` when not provided:
 
 ```powershell
 python main.py
 ```
 
-## Output
+## Output Layout
 
-For each processed book, the script creates a folder named like:
-
-```text
-<Book_Title>_<Gutenberg_ID>
-```
-
-Example:
+For each book, output is created in:
 
 ```text
-The_Time_Machine_35
+<Book_Title>_<Book_ID>/
+├── metadata.json
+├── cover/
+│   └── cover.jpg
+└── sounds/
+    ├── chapter_01.wav
+    ├── chapter_02.wav
+    └── ...
 ```
 
-Inside that folder you should get:
-
-- `cover.jpg` if Gutenberg has a matching cover image
-- `chapter_01.wav`
-- `chapter_02.wav`
-- `chapter_03.wav`
-- and so on
-
-Audio is written as:
-
-- WAV format
+Audio format:
+- WAV
 - mono
 - 24 kHz sample rate
 
-## Project structure and behavior
+## Metadata Schema
 
-Key functions in `main.py`:
+`metadata.json` contains:
 
-- `download_cover(book_id, folder_name)` downloads the Gutenberg cover image
-- `sanitize_filename(filename)` removes characters that are invalid in Windows folder names
-- `get_book_title(raw_text)` extracts the book title from Gutenberg metadata
-- `save_chapters_advanced(book_id)` downloads the book, splits chapters, and writes chapter audio files
-
-The TTS pipeline is initialized with:
-
-```python
-pipeline = KPipeline(lang_code='a')
+```json
+{
+  "book_id": "5200",
+  "title": "Metamorphosis",
+  "author": "Franz Kafka",
+  "language": "English",
+  "release_date": "August 16, 2012 [eBook #5200]",
+  "release_year": 2012,
+  "chapter_count": 12
+}
 ```
 
-and chapter audio is generated with:
+Fields:
+- `book_id`
+- `title`
+- `author`
+- `language`
+- `release_date`
+- `release_year`
+- `chapter_count`
 
-```python
-voice='af_bella'
-speed=1
-split_pattern=r'\n\n+'
-```
+## Supabase Upload Paths
 
-## Notes and current limitations
+When Supabase is configured, uploads are stored as:
 
-- The script currently processes one hardcoded Gutenberg ID at a time.
-- `library_queue.csv` is present in the repo, but it is not yet connected to the script.
-- Chapter splitting is regex-based, so books with unusual formatting may split poorly.
-- Very short sections are skipped because only chunks longer than 500 characters are kept.
-- Output is written as WAV only; there is no MP3 or M4B packaging yet.
-- Error handling is minimal, so network failures or unusual source formatting may require manual retries or code tweaks.
+- `<Book_Title>_<Book_ID>/sounds/*`
+- `<Book_Title>_<Book_ID>/cover/*`
+- `<Book_Title>_<Book_ID>/metadata.json`
 
-## Example use cases
+## Notes
 
-- generating public-domain audiobook drafts
-- testing Kokoro voices on long-form text
-- building a batch audiobook workflow from Gutenberg sources
-- experimenting with chapter segmentation for TTS pipelines
-
-## Future improvements
-
-- read book IDs directly from `library_queue.csv`
-- accept book IDs from the command line
-- support configurable voice, speed, and output format
-- improve chapter detection for inconsistent ebook formatting
-- add retries, logging, and better failure reporting
-- export metadata for audiobook players
-
-## License and source content
-
-This repository contains code for generating audio from public-domain Project Gutenberg texts. Make sure you review the terms and usage guidance for any external models, packages, or source content you use with this pipeline.
+- Chapter splitting is regex-based and may vary by book formatting.
+- The pipeline currently processes one book per command.
