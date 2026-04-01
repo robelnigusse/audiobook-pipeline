@@ -5,6 +5,7 @@ import os
 import re
 import requests
 import mimetypes
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -94,6 +95,49 @@ def get_book_title(raw_text):
         return sanitize_filename(match.group(1))
     return "Unknown_Book"
 
+
+def extract_gutenberg_field(raw_text, field_name):
+    match = re.search(rf"^{field_name}:\s*(.+)$", raw_text, re.MULTILINE | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def extract_release_year(release_date):
+    if not release_date:
+        return None
+    year_match = re.search(r"\b(1[6-9]\d{2}|20\d{2})\b", release_date)
+    if year_match:
+        return int(year_match.group(1))
+    return None
+
+
+def build_book_metadata(book_id, raw_text, chapter_count):
+    title = extract_gutenberg_field(raw_text, "Title") or "Unknown_Book"
+    author = extract_gutenberg_field(raw_text, "Author")
+    language = extract_gutenberg_field(raw_text, "Language")
+    release_date = extract_gutenberg_field(raw_text, "Release Date")
+    
+
+    metadata = {
+        "book_id": str(book_id),
+        "title": title,
+        "author": author,
+        "language": language,
+        "release_date": release_date,
+        "release_year": extract_release_year(release_date),
+        "chapter_count": chapter_count,
+    }
+    return metadata
+
+
+def write_book_metadata(folder_name, metadata):
+    metadata_path = Path(folder_name) / "metadata.json"
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, ensure_ascii=False)
+    print(f"Metadata saved: {metadata_path}")
+    return metadata_path
+
 def save_chapters_advanced(book_id):
     url = f"https://www.gutenberg.org/cache/epub/{book_id}/pg{book_id}.txt"
     print(f"Fetching Book ID: {book_id}...")
@@ -131,12 +175,14 @@ def save_chapters_advanced(book_id):
     sounds_dir.mkdir(parents=True, exist_ok=True)
     cover_dir.mkdir(parents=True, exist_ok=True)
     download_cover(book_id, str(cover_dir))
+    metadata = build_book_metadata(book_id, raw_text, len(chapters))
+    metadata_path = write_book_metadata(folder_name, metadata)
 
     #  Save files
          
     for i, content in enumerate(chapters, start=0):
         generator = pipeline(
-                content, voice='af_bella', 
+                "text-to-speech with vocoder", voice='af_bella', 
                 speed=1, split_pattern=r'\n\n+'
             ) 
         file_path = os.path.join(sounds_dir, f"chapter_{i+1:02d}.wav")
@@ -147,6 +193,7 @@ def save_chapters_advanced(book_id):
     #  Upload generated assets to Supabase bucket
     upload_folder_to_supabase(str(sounds_dir), f"{folder_name}/sounds")
     upload_folder_to_supabase(str(cover_dir), f"{folder_name}/cover")
+    upload_file_to_supabase(str(metadata_path), f"{folder_name}/metadata.json")
         
         
             
@@ -154,4 +201,4 @@ def save_chapters_advanced(book_id):
 # [12122,1063,1952,5200,11]
 
 
-save_chapters_advanced(5200)
+save_chapters_advanced(11)
