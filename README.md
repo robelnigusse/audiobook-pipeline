@@ -4,11 +4,11 @@ Generate chapter-based audiobooks from Project Gutenberg texts, save cover/audio
 
 ## Features
 
-- Downloads Gutenberg plain-text books by book ID
-- Extracts core book metadata
-- Splits book content into chapter-like sections
+- Downloads Gutenberg plain-text books by ID
+- Pulls metadata from Gutendex: `https://gutendex.com/books/{id}`
+- Splits book content into chapter sections
 - Generates `.wav` audio per chapter with Kokoro TTS
-- Downloads the cover image (if available)
+- Downloads a cover image when available
 - Writes `metadata.json` in each book output folder
 - Uploads `sounds/`, `cover/`, and `metadata.json` to Supabase (when configured)
 
@@ -16,24 +16,25 @@ Generate chapter-based audiobooks from Project Gutenberg texts, save cover/audio
 
 ```text
 audiobook_pipeline/
-├── src/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── gutenberg.py
-│   ├── metadata.py
-│   ├── processor.py
-│   └── supabase.py
-├── library_queue.csv
-├── main.py
-├── README.md
-└── requirements.txt
+|- src/
+|  |- __init__.py
+|  |- config.py
+|  |- gutenberg.py
+|  |- metadata.py
+|  |- processor.py
+|  `- supabase.py
+|- library_queue.csv
+|- main.py
+|- README.md
+`- requirements.txt
 ```
 
 ## Requirements
 
 - Python 3.11+
 - Internet access for:
-  - Project Gutenberg downloads
+  - Gutenberg downloads
+  - Gutendex metadata requests
   - Supabase uploads (if enabled)
   - Kokoro model/assets
 
@@ -55,17 +56,17 @@ SUPABASE_KEY=your-supabase-api-key
 BUCKET_NAME=your-storage-bucket
 ```
 
-If any value is missing, the pipeline still saves files locally and skips Supabase upload.
+If any value is missing, local files are still saved and Supabase upload is skipped.
 
 ## Run
 
-`main.py` accepts a CLI argument:
+`main.py` supports `--book_id`:
 
 ```powershell
 python main.py --book_id 5200
 ```
 
-`--book_id` defaults to `5200` when not provided:
+Default value is `5200`:
 
 ```powershell
 python main.py
@@ -73,52 +74,61 @@ python main.py
 
 ## Output Layout
 
-For each book, output is created in:
+For each processed book:
 
 ```text
 <Book_Title>_<Book_ID>/
-├── metadata.json
-├── cover/
-│   └── cover.jpg
-└── sounds/
-    ├── chapter_01.wav
-    ├── chapter_02.wav
-    └── ...
+|- metadata.json
+|- cover/
+|  `- cover.jpg
+`- sounds/
+   |- chapter_01.wav
+   |- chapter_02.wav
+   `- ...
 ```
 
 Audio format:
+
 - WAV
 - mono
 - 24 kHz sample rate
 
-## Metadata Schema
+## Metadata Source and Schema
+
+Metadata is sourced from Gutendex (`/books/{id}`)
 
 `metadata.json` contains:
 
 ```json
 {
-  "book_id": "5200",
-  "title": "Metamorphosis",
-  "author": "Franz Kafka",
-  "language": "English",
-  "release_date": "August 16, 2012 [eBook #5200]",
+  "book_id": "1211",
+  "title": "A Selection from the Lyrical Poems of Robert Herrick",
+  "author": "Herrick, Robert",
+  "language": "en",
   "release_year": 2012,
-  "chapter_count": 12
+  "chapter_count": 10,
+  "Category": [
+    "Category: Classics of Literature",
+    "Category: German Literature",
+    "Category: Novels",
+    "Horror"
+  ]
 }
 ```
 
 Fields:
+
 - `book_id`
 - `title`
 - `author`
 - `language`
-- `release_date`
 - `release_year`
 - `chapter_count`
+- `Category`
 
 ## Supabase Upload Paths
 
-When Supabase is configured, uploads are stored as:
+When Supabase is configured:
 
 - `<Book_Title>_<Book_ID>/sounds/*`
 - `<Book_Title>_<Book_ID>/cover/*`
